@@ -167,5 +167,14 @@ func (qm *QueryManager) AssertGolden(t *testing.T) {
 	
 	// Use only the filename part for golden.Assert since it automatically looks in testdata/
 	filename := filepath.Base(qm.goldenFile)
+	
+	// Check if golden file exists and provide helpful error message (only when not updating)
+	if !golden.FlagUpdate() {
+		goldenPath := filepath.Join("testdata", filename)
+		if _, err := os.Stat(goldenPath); os.IsNotExist(err) {
+			t.Fatalf("Golden file '%s' does not exist.\n\nTo create the golden file:\n1. Run the test with -update flag: go test -update\n   OR\n2. Manually create the file with expected SQL queries\n   OR\n3. Use SaveToFile() method to generate the golden file from recorded queries", goldenPath)
+		}
+	}
+	
 	golden.Assert(t, content, filename)
 }

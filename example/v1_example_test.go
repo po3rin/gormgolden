@@ -81,14 +81,14 @@ func TestGORMV1EnableDisable(t *testing.T) {
 		Price: 29.99,
 	}
 	db.Create(&product)
-	
+
 	if len(gormgoldenv1.GetQueries()) != 0 {
 		t.Error("expected no queries when disabled")
 	}
 
 	gormgoldenv1.Enable()
 	db.First(&product, 1)
-	
+
 	if len(gormgoldenv1.GetQueries()) != 1 {
 		t.Error("expected 1 query when enabled")
 	}
