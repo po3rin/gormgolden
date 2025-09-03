@@ -7,6 +7,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/format"
+	_ "github.com/pingcap/tidb/parser/test_driver"
 	"gotest.tools/v3/golden"
 )
 
@@ -27,15 +30,78 @@ func NewQueryManager(goldenFile string) *QueryManager {
 	}
 }
 
+// normalize normalizes SQL query using TiDB parser
+func (qm *QueryManager) normalize(query string) string {
+	if query == "" {
+		return query
+	}
+
+	// Remove comments first
+	query = parser.TrimComment(query)
+	
+	// After removing comments, check if query is empty or only whitespace
+	if strings.TrimSpace(query) == "" {
+		return ""
+	}
+	
+	// Parse and normalize the SQL
+	p := parser.New()
+	stmts, _, err := p.Parse(query, "", "")
+	if err != nil {
+		// If parsing fails, fall back to basic normalization
+		return qm.basicNormalize(query)
+	}
+	
+	if len(stmts) == 0 {
+		return query
+	}
+	
+	// Use the normalized string representation
+	var buf strings.Builder
+	for i, stmt := range stmts {
+		if i > 0 {
+			buf.WriteString("; ")
+		}
+		if err := stmt.Restore(format.NewRestoreCtx(format.RestoreKeyWordUppercase|format.RestoreNameBackQuotes, &buf)); err != nil {
+			// If restore fails, fall back to basic normalization
+			return qm.basicNormalize(query)
+		}
+	}
+	
+	return buf.String()
+}
+
+// basicNormalize provides basic SQL normalization as fallback
+func (qm *QueryManager) basicNormalize(query string) string {
+	// Remove extra whitespace
+	query = strings.TrimSpace(query)
+	query = strings.ReplaceAll(query, "\n", " ")
+	query = strings.ReplaceAll(query, "\t", " ")
+	
+	// Remove extra spaces
+	for strings.Contains(query, "  ") {
+		query = strings.ReplaceAll(query, "  ", " ")
+	}
+	
+	// Remove unnecessary parentheses that GORM v1 adds
+	query = strings.ReplaceAll(query, "( ", "(")
+	query = strings.ReplaceAll(query, " )", ")")
+	
+	return query
+}
+
 // AddQuery adds a SQL query to the recorded list
 func (qm *QueryManager) AddQuery(query string) {
 	if !qm.enabled || query == "" {
 		return
 	}
 	
+	// Normalize the query before adding
+	normalizedQuery := qm.normalize(query)
+	
 	qm.mu.Lock()
 	defer qm.mu.Unlock()
-	qm.queries = append(qm.queries, query)
+	qm.queries = append(qm.queries, normalizedQuery)
 }
 
 // Enable enables query recording
