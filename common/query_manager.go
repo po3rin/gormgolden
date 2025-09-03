@@ -3,6 +3,7 @@ package common
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -86,6 +87,34 @@ func (qm *QueryManager) basicNormalize(query string) string {
 	// Remove unnecessary parentheses that GORM v1 adds
 	query = strings.ReplaceAll(query, "( ", "(")
 	query = strings.ReplaceAll(query, " )", ")")
+	
+	return query
+}
+
+// normalizeForComparison normalizes SQL for comparison by removing charset prefixes and extra parentheses
+func (qm *QueryManager) normalizeForComparison(query string) string {
+	// Start with basic normalization
+	query = qm.basicNormalize(query)
+	
+	// Remove MySQL charset prefixes like _UTF8MB4
+	utf8mb4Regex := regexp.MustCompile(`_UTF8MB4([0-9A-Za-z]+)`)
+	query = utf8mb4Regex.ReplaceAllString(query, "$1")
+	
+	// Normalize parentheses around conditions
+	// Remove outer parentheses around WHERE conditions
+	parenRegex := regexp.MustCompile(`\(([^()]+)\)`)
+	query = parenRegex.ReplaceAllStringFunc(query, func(match string) string {
+		// Keep parentheses for IN clauses and function calls
+		inner := match[1 : len(match)-1]
+		if strings.Contains(inner, " IN ") || strings.Contains(inner, "(),") {
+			return match
+		}
+		// Remove outer parentheses for simple conditions
+		if strings.Count(inner, "=") == 1 && !strings.Contains(inner, " AND ") && !strings.Contains(inner, " OR ") {
+			return inner
+		}
+		return match
+	})
 	
 	return query
 }
@@ -177,4 +206,41 @@ func (qm *QueryManager) AssertGolden(t *testing.T) {
 	}
 	
 	golden.Assert(t, content, filename)
+}
+
+// AssertGoldenWithComparison asserts the recorded queries against a golden file using comparison normalization
+func (qm *QueryManager) AssertGoldenWithComparison(t *testing.T) {
+	qm.mu.Lock()
+	defer qm.mu.Unlock()
+	
+	// Normalize queries for comparison
+	normalizedQueries := make([]string, len(qm.queries))
+	for i, query := range qm.queries {
+		normalizedQueries[i] = qm.normalizeForComparison(query)
+	}
+	
+	content := strings.Join(normalizedQueries, ";\n")
+	if len(normalizedQueries) > 0 && content != "" {
+		content += ";"
+	}
+	
+	// Use only the filename part for golden.Assert since it automatically looks in testdata/
+	filename := filepath.Base(qm.goldenFile)
+	
+	// Check if golden file exists and provide helpful error message (only when not updating)
+	if !golden.FlagUpdate() {
+		goldenPath := filepath.Join("testdata", filename)
+		if _, err := os.Stat(goldenPath); os.IsNotExist(err) {
+			t.Fatalf("Golden file '%s' does not exist.\n\nTo create the golden file:\n1. Run the test with -update flag: go test -update\n   OR\n2. Manually create the file with expected SQL queries\n   OR\n3. Use SaveToFile() method to generate the golden file from recorded queries", goldenPath)
+		}
+	}
+	
+	golden.Assert(t, content, filename)
+}
+
+// CompareQueries compares two SQL queries using normalization for comparison
+func (qm *QueryManager) CompareQueries(query1, query2 string) bool {
+	normalized1 := qm.normalizeForComparison(query1)
+	normalized2 := qm.normalizeForComparison(query2)
+	return normalized1 == normalized2
 }

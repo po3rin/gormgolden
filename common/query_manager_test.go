@@ -145,3 +145,106 @@ func TestQueryManager_NormalizationDisabled(t *testing.T) {
 		t.Errorf("Expected 1 query when enabled, got %d", len(queries))
 	}
 }
+
+func TestQueryManager_normalizeForComparison(t *testing.T) {
+	qm := NewQueryManager("test.golden.sql")
+	
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "remove UTF8MB4 prefix",
+			input:    "SELECT * FROM `user_settings` WHERE `user_settings`.`org_id`=_UTF8MB4ABC123DEF456GHI789JKL012",
+			expected: "SELECT * FROM `user_settings` WHERE `user_settings`.`org_id`=ABC123DEF456GHI789JKL012",
+		},
+		{
+			name:     "remove parentheses around simple conditions",
+			input:    "SELECT * FROM users WHERE (`id`=1) AND (`name`='test')",
+			expected: "SELECT * FROM users WHERE `id`=1 AND `name`='test'",
+		},
+		{
+			name:     "keep parentheses for IN clauses",
+			input:    "SELECT * FROM users WHERE id IN (1, 2, 3)",
+			expected: "SELECT * FROM users WHERE id IN (1, 2, 3)",
+		},
+		{
+			name:     "complex query with UTF8MB4 and parentheses",
+			input:    "SELECT * FROM `user_settings` WHERE (`user_settings`.`org_id`=_UTF8MB4ABC123DEF456GHI789JKL012) AND (`user_settings`.`config_id` IN (_UTF8MB4XYZ789ABC123DEF456GHI))",
+			expected: "SELECT * FROM `user_settings` WHERE `user_settings`.`org_id`=ABC123DEF456GHI789JKL012 AND (`user_settings`.`config_id` IN (XYZ789ABC123DEF456GHI))",
+		},
+		{
+			name:     "multiple UTF8MB4 occurrences",
+			input:    "WHERE org_id=_UTF8MB4123ABC AND user_id=_UTF8MB4456DEF",
+			expected: "WHERE org_id=123ABC AND user_id=456DEF",
+		},
+		{
+			name:     "keep complex conditions with AND/OR in parentheses",
+			input:    "WHERE (status='active' AND created_at > '2023-01-01' OR status='pending')",
+			expected: "WHERE (status='active' AND created_at > '2023-01-01' OR status='pending')",
+		},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := qm.normalizeForComparison(tt.input)
+			if result != tt.expected {
+				t.Errorf("normalizeForComparison() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestQueryManager_CompareQueries(t *testing.T) {
+	qm := NewQueryManager("test.golden.sql")
+	
+	tests := []struct {
+		name     string
+		query1   string
+		query2   string
+		expected bool
+	}{
+		{
+			name:     "identical queries should match",
+			query1:   "SELECT * FROM users WHERE id=1",
+			query2:   "SELECT * FROM users WHERE id=1",
+			expected: true,
+		},
+		{
+			name:     "queries with and without UTF8MB4 should match",
+			query1:   "SELECT * FROM users WHERE org_id=_UTF8MB4ABC123DEF456GHI789JKL012",
+			query2:   "SELECT * FROM users WHERE org_id=ABC123DEF456GHI789JKL012",
+			expected: true,
+		},
+		{
+			name:     "queries with different parentheses should match",
+			query1:   "SELECT * FROM users WHERE (`id`=1) AND (`name`='test')",
+			query2:   "SELECT * FROM users WHERE `id`=1 AND `name`='test'",
+			expected: true,
+		},
+		{
+			name:     "different queries should not match",
+			query1:   "SELECT * FROM users WHERE id=1",
+			query2:   "SELECT * FROM users WHERE id=2",
+			expected: false,
+		},
+		{
+			name:     "complex real-world example should match",
+			query1:   "SELECT * FROM `user_settings` WHERE (`user_settings`.`org_id`=_UTF8MB4ABC123DEF456GHI789JKL012) AND (`user_settings`.`config_id` IN (_UTF8MB4XYZ789ABC123DEF456GHI))",
+			query2:   "SELECT * FROM `user_settings` WHERE `user_settings`.`org_id`=ABC123DEF456GHI789JKL012 AND (`user_settings`.`config_id` IN (XYZ789ABC123DEF456GHI))",
+			expected: true,
+		},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := qm.CompareQueries(tt.query1, tt.query2)
+			if result != tt.expected {
+				t.Errorf("CompareQueries() = %v, want %v", result, tt.expected)
+				t.Logf("Query1 normalized: %q", qm.normalizeForComparison(tt.query1))
+				t.Logf("Query2 normalized: %q", qm.normalizeForComparison(tt.query2))
+			}
+		})
+	}
+}
