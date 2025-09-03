@@ -165,14 +165,14 @@ func TestQueryManager_normalizeForComparison(t *testing.T) {
 			expected: "SELECT * FROM users WHERE `id`=1 AND `name`='test'",
 		},
 		{
-			name:     "keep parentheses for IN clauses",
+			name:     "remove all parentheses including IN clauses",
 			input:    "SELECT * FROM users WHERE id IN (1, 2, 3)",
-			expected: "SELECT * FROM users WHERE id IN (1, 2, 3)",
+			expected: "SELECT * FROM users WHERE id IN 1, 2, 3",
 		},
 		{
 			name:     "complex query with UTF8MB4 and parentheses",
 			input:    "SELECT * FROM `user_settings` WHERE (`user_settings`.`org_id`=_UTF8MB4ABC123DEF456GHI789JKL012) AND (`user_settings`.`config_id` IN (_UTF8MB4XYZ789ABC123DEF456GHI))",
-			expected: "SELECT * FROM `user_settings` WHERE `user_settings`.`org_id`=ABC123DEF456GHI789JKL012 AND (`user_settings`.`config_id` IN (XYZ789ABC123DEF456GHI))",
+			expected: "SELECT * FROM `user_settings` WHERE `user_settings`.`org_id`=ABC123DEF456GHI789JKL012 AND `user_settings`.`config_id` IN XYZ789ABC123DEF456GHI",
 		},
 		{
 			name:     "multiple UTF8MB4 occurrences",
@@ -180,9 +180,9 @@ func TestQueryManager_normalizeForComparison(t *testing.T) {
 			expected: "WHERE org_id=123ABC AND user_id=456DEF",
 		},
 		{
-			name:     "keep complex conditions with AND/OR in parentheses",
+			name:     "remove complex conditions parentheses",
 			input:    "WHERE (status='active' AND created_at > '2023-01-01' OR status='pending')",
-			expected: "WHERE (status='active' AND created_at > '2023-01-01' OR status='pending')",
+			expected: "WHERE status='active' AND created_at > '2023-01-01' OR status='pending'",
 		},
 	}
 	
@@ -232,7 +232,7 @@ func TestQueryManager_CompareQueries(t *testing.T) {
 		{
 			name:     "complex real-world example should match",
 			query1:   "SELECT * FROM `user_settings` WHERE (`user_settings`.`org_id`=_UTF8MB4ABC123DEF456GHI789JKL012) AND (`user_settings`.`config_id` IN (_UTF8MB4XYZ789ABC123DEF456GHI))",
-			query2:   "SELECT * FROM `user_settings` WHERE `user_settings`.`org_id`=ABC123DEF456GHI789JKL012 AND (`user_settings`.`config_id` IN (XYZ789ABC123DEF456GHI))",
+			query2:   "SELECT * FROM `user_settings` WHERE `user_settings`.`org_id`=ABC123DEF456GHI789JKL012 AND `user_settings`.`config_id` IN XYZ789ABC123DEF456GHI",
 			expected: true,
 		},
 	}

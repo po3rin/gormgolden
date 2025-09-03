@@ -91,7 +91,7 @@ func (qm *QueryManager) basicNormalize(query string) string {
 	return query
 }
 
-// normalizeForComparison normalizes SQL for comparison by removing charset prefixes and extra parentheses
+// normalizeForComparison normalizes SQL for comparison by removing charset prefixes and all parentheses
 func (qm *QueryManager) normalizeForComparison(query string) string {
 	// Start with basic normalization
 	query = qm.basicNormalize(query)
@@ -100,21 +100,9 @@ func (qm *QueryManager) normalizeForComparison(query string) string {
 	utf8mb4Regex := regexp.MustCompile(`_UTF8MB4([0-9A-Za-z]+)`)
 	query = utf8mb4Regex.ReplaceAllString(query, "$1")
 	
-	// Normalize parentheses around conditions
-	// Remove outer parentheses around WHERE conditions
-	parenRegex := regexp.MustCompile(`\(([^()]+)\)`)
-	query = parenRegex.ReplaceAllStringFunc(query, func(match string) string {
-		// Keep parentheses for IN clauses and function calls
-		inner := match[1 : len(match)-1]
-		if strings.Contains(inner, " IN ") || strings.Contains(inner, "(),") {
-			return match
-		}
-		// Remove outer parentheses for simple conditions
-		if strings.Count(inner, "=") == 1 && !strings.Contains(inner, " AND ") && !strings.Contains(inner, " OR ") {
-			return inner
-		}
-		return match
-	})
+	// Remove ALL parentheses for comparison
+	query = strings.ReplaceAll(query, "(", "")
+	query = strings.ReplaceAll(query, ")", "")
 	
 	return query
 }
