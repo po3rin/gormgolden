@@ -105,6 +105,9 @@ func (qm *QueryManager) normalizeForComparison(query string) string {
 	query = strings.ReplaceAll(query, "(", "")
 	query = strings.ReplaceAll(query, ")", "")
 	
+	// Remove backticks for comparison
+	query = strings.ReplaceAll(query, "`", "")
+	
 	return query
 }
 
