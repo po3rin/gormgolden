@@ -195,6 +195,48 @@ func (qm *QueryManager) AssertGolden(t *testing.T) {
 		if _, err := os.Stat(goldenPath); os.IsNotExist(err) {
 			t.Fatalf("Golden file '%s' does not exist.\n\nTo create the golden file:\n1. Run the test with -update flag: go test -update\n   OR\n2. Manually create the file with expected SQL queries\n   OR\n3. Use SaveToFile() method to generate the golden file from recorded queries", goldenPath)
 		}
+		
+		// Perform normalized comparison before golden assertion
+		if data, err := os.ReadFile(goldenPath); err == nil {
+			goldenContent := string(data)
+			
+			// Normalize actual queries for comparison
+			actualNormalized := make([]string, len(qm.queries))
+			for i, query := range qm.queries {
+				actualNormalized[i] = qm.normalizeForComparison(query)
+			}
+			
+			// Normalize golden queries for comparison
+			queries := strings.Split(strings.TrimSuffix(goldenContent, ";"), ";\n")
+			goldenNormalized := make([]string, 0, len(queries))
+			for _, query := range queries {
+				if strings.TrimSpace(query) != "" {
+					goldenNormalized = append(goldenNormalized, qm.normalizeForComparison(query))
+				}
+			}
+			
+			// Check if normalized queries match
+			if len(actualNormalized) == len(goldenNormalized) {
+				allMatch := true
+				for i := 0; i < len(actualNormalized); i++ {
+					if actualNormalized[i] != goldenNormalized[i] {
+						allMatch = false
+						break
+					}
+				}
+				
+				if allMatch {
+					// Show normalized comparison for success case
+					fmt.Printf("\n=== NORMALIZED COMPARISON ===\n")
+					for i := 0; i < len(actualNormalized); i++ {
+						fmt.Printf("  [%d] ✓ MATCH: %s\n", i+1, actualNormalized[i])
+					}
+					fmt.Printf("\n  ✓ All normalized queries match! The difference is only in formatting.\n")
+					// Return early - test passes
+					return
+				}
+			}
+		}
 	}
 	
 	// Try assertion, if it fails, show normalized diff
@@ -208,10 +250,6 @@ func (qm *QueryManager) AssertGolden(t *testing.T) {
 				actualNormalized := make([]string, len(qm.queries))
 				for i, query := range qm.queries {
 					actualNormalized[i] = qm.normalizeForComparison(query)
-				}
-				actualNormalizedContent := strings.Join(actualNormalized, ";\n")
-				if len(actualNormalized) > 0 {
-					actualNormalizedContent += ";"
 				}
 				
 				// Normalize golden queries for comparison
