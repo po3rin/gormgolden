@@ -34,8 +34,8 @@ func TestGORMV2SQLCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Clear migration queries
-	gormgoldenv2.Clear()
+	// Clear migration queries using local method
+	plugin.Clear()
 
 	// Perform operations
 	user := User{Name: "John Doe", Email: "john@example.com", Age: 30}
@@ -48,14 +48,14 @@ func TestGORMV2SQLCapture(t *testing.T) {
 
 	db.Delete(&user)
 
-	// Verify queries were recorded by callbacks and assert against golden file
-	queries := gormgoldenv2.GetQueries()
+	// Verify queries were recorded by callbacks and assert against golden file using local method
+	queries := plugin.GetQueries()
 	if len(queries) != 4 {
 		t.Errorf("expected 4 queries, got %d", len(queries))
 	}
 
-	// Single line golden assertion
-	gormgoldenv2.AssertGolden(t)
+	// Single line golden assertion using local method
+	plugin.AssertGolden(t)
 }
 
 func TestGORMV2EnableDisable(t *testing.T) {
@@ -75,22 +75,22 @@ func TestGORMV2EnableDisable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	gormgoldenv2.Clear()
+	plugin.Clear()
 
-	// Test disable
-	gormgoldenv2.Disable()
+	// Test disable using local method
+	plugin.Disable()
 	user := User{Name: "Jane Doe", Email: "jane@example.com", Age: 25}
 	db.Create(&user)
 	
-	if len(gormgoldenv2.GetQueries()) != 0 {
+	if len(plugin.GetQueries()) != 0 {
 		t.Error("expected no queries when disabled")
 	}
 
-	// Test enable
-	gormgoldenv2.Enable()
+	// Test enable using local method
+	plugin.Enable()
 	db.First(&user, 1)
 	
-	if len(gormgoldenv2.GetQueries()) != 1 {
+	if len(plugin.GetQueries()) != 1 {
 		t.Error("expected 1 query when enabled")
 	}
 }

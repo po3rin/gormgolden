@@ -7,17 +7,15 @@ import (
 	"gorm.io/gorm"
 )
 
-var (
-	queryManager *common.QueryManager
-)
-
 type Plugin struct {
 	GoldenFile   string
+	queryManager *common.QueryManager
 }
 
 func New(filePath string) *Plugin {
 	return &Plugin{
-		GoldenFile: filePath,
+		GoldenFile:   filePath,
+		queryManager: common.NewQueryManager(filePath),
 	}
 }
 
@@ -26,26 +24,25 @@ func (p *Plugin) Name() string {
 }
 
 func (p *Plugin) Initialize(db *gorm.DB) error {
-	queryManager = common.NewQueryManager(p.GoldenFile)
-	
 	// Register callbacks for all operations
 	callback := db.Callback()
 	
-	callback.Query().After("gorm:query").Register("gormgolden:after_query", afterCallback)
-	callback.Create().After("gorm:create").Register("gormgolden:after_create", afterCallback)
-	callback.Update().After("gorm:update").Register("gormgolden:after_update", afterCallback)
-	callback.Delete().After("gorm:delete").Register("gormgolden:after_delete", afterCallback)
-	callback.Raw().After("gorm:raw").Register("gormgolden:after_raw", afterCallback)
-	callback.Row().After("gorm:row").Register("gormgolden:after_row", afterCallback)
+	// Use closure to capture the plugin's queryManager
+	afterCallbackFunc := func(db *gorm.DB) {
+		if db.Statement != nil && db.Statement.SQL.String() != "" {
+			sql := buildFullSQL(db)
+			p.queryManager.AddQuery(sql)
+		}
+	}
+	
+	callback.Query().After("gorm:query").Register("gormgolden:after_query", afterCallbackFunc)
+	callback.Create().After("gorm:create").Register("gormgolden:after_create", afterCallbackFunc)
+	callback.Update().After("gorm:update").Register("gormgolden:after_update", afterCallbackFunc)
+	callback.Delete().After("gorm:delete").Register("gormgolden:after_delete", afterCallbackFunc)
+	callback.Raw().After("gorm:raw").Register("gormgolden:after_raw", afterCallbackFunc)
+	callback.Row().After("gorm:row").Register("gormgolden:after_row", afterCallbackFunc)
 	
 	return nil
-}
-
-func afterCallback(db *gorm.DB) {
-	if db.Statement != nil && db.Statement.SQL.String() != "" {
-		sql := buildFullSQL(db)
-		queryManager.AddQuery(sql)
-	}
 }
 
 func buildFullSQL(db *gorm.DB) string {
@@ -64,42 +61,43 @@ func buildFullSQL(db *gorm.DB) string {
 	return db.Dialector.Explain(sql, vars...)
 }
 
-// Public functions to control recording
-func Enable() {
-	if queryManager != nil {
-		queryManager.Enable()
+// Local methods on Plugin for managing queries
+func (p *Plugin) Enable() {
+	if p.queryManager != nil {
+		p.queryManager.Enable()
 	}
 }
 
-func Disable() {
-	if queryManager != nil {
-		queryManager.Disable()
+func (p *Plugin) Disable() {
+	if p.queryManager != nil {
+		p.queryManager.Disable()
 	}
 }
 
-func Clear() {
-	if queryManager != nil {
-		queryManager.Clear()
+func (p *Plugin) Clear() {
+	if p.queryManager != nil {
+		p.queryManager.Clear()
 	}
 }
 
-func GetQueries() []string {
-	if queryManager != nil {
-		return queryManager.GetQueries()
+func (p *Plugin) GetQueries() []string {
+	if p.queryManager != nil {
+		return p.queryManager.GetQueries()
 	}
 	return []string{}
 }
 
-func SaveToFile(filePath string) error {
-	if queryManager != nil {
-		return queryManager.SaveToFile(filePath)
+func (p *Plugin) SaveToFile(filePath string) error {
+	if p.queryManager != nil {
+		return p.queryManager.SaveToFile(filePath)
 	}
 	return nil
 }
 
-func AssertGolden(t *testing.T) {
-	if queryManager != nil {
-		queryManager.AssertGolden(t)
+func (p *Plugin) AssertGolden(t *testing.T) {
+	if p.queryManager != nil {
+		p.queryManager.AssertGolden(t)
 	}
 }
+
 

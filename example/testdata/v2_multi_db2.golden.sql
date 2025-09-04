@@ -1,0 +1,1 @@
+INSERT INTO `users` (`name`,`email`,`age`) VALUES ("Charlie","charlie@example.com",40) RETURNING `id`;

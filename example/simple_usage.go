@@ -37,8 +37,8 @@ func ExampleGORMV2Usage() {
 	}
 	db.AutoMigrate(&User{})
 
-	// Clear queries from migration
-	gormgoldenv2.Clear()
+	// Clear queries from migration using local method
+	plugin.Clear()
 
 	// Perform database operations
 	user := User{Name: "Alice", Email: "alice@example.com", Age: 28}
@@ -49,24 +49,24 @@ func ExampleGORMV2Usage() {
 
 	db.Model(&user).Update("age", 29)
 
-	// Save SQL queries to golden file
-	err = gormgoldenv2.SaveToFile("user_operations.golden.sql")
+	// Save SQL queries to golden file using local method
+	err = plugin.SaveToFile("user_operations.golden.sql")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Get queries programmatically
-	queries := gormgoldenv2.GetQueries()
+	// Get queries programmatically using local method
+	queries := plugin.GetQueries()
 	for i, query := range queries {
 		fmt.Printf("Query %d: %s\n", i+1, query)
 	}
 
-	// Disable recording temporarily
-	gormgoldenv2.Disable()
+	// Disable recording temporarily using local method
+	plugin.Disable()
 	db.Delete(&user) // This query won't be recorded
 
-	// Re-enable recording
-	gormgoldenv2.Enable()
+	// Re-enable recording using local method
+	plugin.Enable()
 	db.First(&user, 1) // This query will be recorded
 }
 

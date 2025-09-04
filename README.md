@@ -8,10 +8,11 @@ Note: Package names are `gormgoldenv1` and `gormgoldenv2` to avoid confusion wit
 
 - Records all SQL queries executed through GORM using callbacks
 - Saves queries to files for golden testing
-- Thread-safe implementation with global state
+- Thread-safe implementation with local state management
 - Enable/disable recording on demand
 - Support for both GORM v1 and v2
 - No recorder pattern - uses direct callback registration
+- Support for multiple independent plugin instances (GORM v2)
 
 ## Installation
 
@@ -20,6 +21,42 @@ go get github.com/po3rin/gormgolden
 ```
 
 ## Usage
+
+### Golden Testing
+
+Use with `gotest.tools/v3/golden` for golden file testing:
+
+```go
+import (
+    "testing"
+    "gotest.tools/v3/golden"
+)
+
+func TestDatabaseOperations(t *testing.T) {
+    // Setup database and plugin
+    plugin := gormgoldenv2.New("testdata/queries.golden.sql")
+    db.Use(plugin)
+    
+    // Execute operations
+    performDatabaseOperations(db)
+    
+    // Assert against golden file using plugin method
+    plugin.AssertGolden(t)
+}
+```
+
+#### Updating Golden Files
+
+To update golden files when your SQL queries change:
+
+```bash
+# Update all golden files
+go test -update
+
+# Update specific test
+go test -run TestDatabaseOperations -update
+```
+
 
 ### GORM v2
 
@@ -37,18 +74,37 @@ db.Use(plugin)
 db.Create(&user)
 db.Where("age > ?", 25).Find(&users)
 
-// Save queries to file
-err := gormgoldenv2.SaveToFile("queries.sql")
+// Use plugin methods for local management
+err := plugin.SaveToFile("queries.sql")
 
 // Get queries programmatically
-queries := gormgoldenv2.GetQueries()
+queries := plugin.GetQueries()
 
 // Clear recorded queries
-gormgoldenv2.Clear()
+plugin.Clear()
 
 // Disable/Enable recording
-gormgoldenv2.Disable()
-gormgoldenv2.Enable()
+plugin.Disable()
+plugin.Enable()
+```
+
+#### Multiple Plugin Instances
+
+```go
+// Create independent plugins for different databases
+plugin1 := gormgoldenv2.New("db1_queries.golden.sql")
+plugin2 := gormgoldenv2.New("db2_queries.golden.sql")
+
+db1.Use(plugin1)
+db2.Use(plugin2)
+
+// Each plugin tracks its own queries independently
+plugin1.Clear()
+plugin2.Clear()
+
+// Assert against different golden files
+plugin1.AssertGolden(t)
+plugin2.AssertGolden(t)
 ```
 
 ### GORM v1
@@ -80,52 +136,17 @@ gormgoldenv1.Disable()
 gormgoldenv1.Enable()
 ```
 
-## Golden Testing
-
-Use with `gotest.tools/v3/golden` for golden file testing:
-
-```go
-import (
-    "testing"
-    "gotest.tools/v3/golden"
-)
-
-func TestDatabaseOperations(t *testing.T) {
-    // Setup database and plugin
-    plugin := gormgoldenv2.New("testdata/queries.golden.sql")
-    db.Use(plugin)
-    
-    // Execute operations
-    performDatabaseOperations(db)
-    
-    // Assert against golden file (simplified with plugin integration)
-    gormgoldenv2.AssertGolden(t)
-}
-```
-
-### Updating Golden Files
-
-To update golden files when your SQL queries change:
-
-```bash
-# Update all golden files
-go test -update
-
-# Update specific test
-go test -run TestDatabaseOperations -update
-```
-
 ## API
 
-### GORM v2 Functions
+### GORM v2 Plugin Methods
 
 - `gormgoldenv2.New(filePath string) *Plugin` - Create new plugin with golden file path
-- `gormgoldenv2.GetQueries() []string` - Get all recorded queries
-- `gormgoldenv2.SaveToFile(filePath string) error` - Save queries to file with semicolon separator
-- `gormgoldenv2.AssertGolden(t *testing.T)` - Assert queries against golden file
-- `gormgoldenv2.Clear()` - Clear all recorded queries
-- `gormgoldenv2.Enable()` - Enable query recording
-- `gormgoldenv2.Disable()` - Disable query recording
+- `plugin.GetQueries() []string` - Get all recorded queries
+- `plugin.SaveToFile(filePath string) error` - Save queries to file with semicolon separator
+- `plugin.AssertGolden(t *testing.T)` - Assert queries against golden file
+- `plugin.Clear()` - Clear all recorded queries
+- `plugin.Enable()` - Enable query recording
+- `plugin.Disable()` - Disable query recording
 
 ### GORM v1 Functions
 
