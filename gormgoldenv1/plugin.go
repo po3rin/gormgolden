@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,32 +13,45 @@ import (
 )
 
 var (
-	queryManager *common.QueryManager
+	queryManagers  = &sync.Map{} // map[*gorm.DB]*common.QueryManager
+	filePathToQM   = &sync.Map{} // map[string]*common.QueryManager (filePath -> queryManager)
+	dbToFilePath   = &sync.Map{} // map[*gorm.DB]string (db -> filePath)
+	currentFilePath string        // For backward compatibility with functions that don't take filePath
+	currentMutex   sync.RWMutex
 )
 
 func Register(db *gorm.DB, filePath string) error {
-	queryManager = common.NewQueryManager(filePath)
+	queryManager := common.NewQueryManager(filePath)
+	queryManagers.Store(db, queryManager)
+	filePathToQM.Store(filePath, queryManager)
+	dbToFilePath.Store(db, filePath)
 
-	// Register callbacks for all operations
-	db.Callback().Create().After("gorm:create").Register("gormgolden:after_create", afterCallback)
-	db.Callback().Query().After("gorm:query").Register("gormgolden:after_query", afterCallback)
-	db.Callback().Update().After("gorm:update").Register("gormgolden:after_update", afterCallback)
-	db.Callback().Delete().After("gorm:delete").Register("gormgolden:after_delete", afterCallback)
-	db.Callback().RowQuery().After("gorm:row_query").Register("gormgolden:after_row_query", afterCallback)
+	// Update current filePath for backward compatibility
+	currentMutex.Lock()
+	currentFilePath = filePath
+	currentMutex.Unlock()
 
-	return nil
-}
+	// Create a closure that captures the queryManager
+	afterCallbackFunc := func(scope *gorm.Scope) {
+		sql := scope.SQL
+		vars := scope.SQLVars
 
-func afterCallback(scope *gorm.Scope) {
-	sql := scope.SQL
-	vars := scope.SQLVars
+		if sql == "" {
+			return
+		}
 
-	if sql == "" {
-		return
+		fullSQL := buildFullSQL(sql, vars)
+		queryManager.AddQuery(fullSQL)
 	}
 
-	fullSQL := buildFullSQL(sql, vars)
-	queryManager.AddQuery(fullSQL)
+	// Register callbacks for all operations
+	db.Callback().Create().After("gorm:create").Register("gormgolden:after_create", afterCallbackFunc)
+	db.Callback().Query().After("gorm:query").Register("gormgolden:after_query", afterCallbackFunc)
+	db.Callback().Update().After("gorm:update").Register("gormgolden:after_update", afterCallbackFunc)
+	db.Callback().Delete().After("gorm:delete").Register("gormgolden:after_delete", afterCallbackFunc)
+	db.Callback().RowQuery().After("gorm:row_query").Register("gormgolden:after_row_query", afterCallbackFunc)
+
+	return nil
 }
 
 func buildFullSQL(sql string, vars []interface{}) string {
@@ -90,41 +104,83 @@ func formatValue(v interface{}) string {
 	}
 }
 
+// getQueryManagerByFilePath returns the queryManager for a given filePath
+func getQueryManagerByFilePath(filePath string) *common.QueryManager {
+	if qm, ok := filePathToQM.Load(filePath); ok {
+		if queryManager, ok := qm.(*common.QueryManager); ok {
+			return queryManager
+		}
+	}
+	return nil
+}
+
+// getQueryManagerByDB returns the queryManager for a given DB
+func getQueryManagerByDB(db *gorm.DB) *common.QueryManager {
+	if qm, ok := queryManagers.Load(db); ok {
+		if queryManager, ok := qm.(*common.QueryManager); ok {
+			return queryManager
+		}
+	}
+	return nil
+}
+
+// getCurrentQueryManager returns the current queryManager (for backward compatibility)
+func getCurrentQueryManager() *common.QueryManager {
+	currentMutex.RLock()
+	fp := currentFilePath
+	currentMutex.RUnlock()
+	return getQueryManagerByFilePath(fp)
+}
+
 // Public functions to control recording
 func Enable() {
-	if queryManager != nil {
-		queryManager.Enable()
+	if qm := getCurrentQueryManager(); qm != nil {
+		qm.Enable()
 	}
 }
 
 func Disable() {
-	if queryManager != nil {
-		queryManager.Disable()
+	if qm := getCurrentQueryManager(); qm != nil {
+		qm.Disable()
 	}
 }
 
 func Clear() {
-	if queryManager != nil {
-		queryManager.Clear()
+	if qm := getCurrentQueryManager(); qm != nil {
+		qm.Clear()
+	}
+}
+
+// ClearDB clears queries for a specific DB instance (thread-safe for parallel tests)
+func ClearDB(db *gorm.DB) {
+	if qm := getQueryManagerByDB(db); qm != nil {
+		qm.Clear()
 	}
 }
 
 func GetQueries() []string {
-	if queryManager != nil {
-		return queryManager.GetQueries()
+	if qm := getCurrentQueryManager(); qm != nil {
+		return qm.GetQueries()
 	}
 	return []string{}
 }
 
 func SaveToFile(filePath string) error {
-	if queryManager != nil {
-		return queryManager.SaveToFile(filePath)
+	if qm := getCurrentQueryManager(); qm != nil {
+		return qm.SaveToFile(filePath)
 	}
 	return nil
 }
 
 func AssertGolden(t *testing.T) {
-	if queryManager != nil {
-		queryManager.AssertGolden(t)
+	if qm := getCurrentQueryManager(); qm != nil {
+		qm.AssertGolden(t)
+	}
+}
+
+// AssertGoldenDB asserts golden file for a specific DB instance (thread-safe for parallel tests)
+func AssertGoldenDB(t *testing.T, db *gorm.DB) {
+	if qm := getQueryManagerByDB(db); qm != nil {
+		qm.AssertGolden(t)
 	}
 }
