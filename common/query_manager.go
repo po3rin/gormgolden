@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -304,6 +305,148 @@ func (qm *QueryManager) AssertGolden(t *testing.T) {
 		}
 	}()
 	
+	golden.Assert(t, content, filename)
+}
+
+// AssertGoldenSorted asserts the recorded queries against a golden file, ignoring query order.
+// This is useful when queries are executed in parallel and their order is non-deterministic.
+func (qm *QueryManager) AssertGoldenSorted(t *testing.T) {
+	qm.mu.Lock()
+	defer qm.mu.Unlock()
+
+	// Sort queries before joining
+	sortedQueries := make([]string, len(qm.queries))
+	copy(sortedQueries, qm.queries)
+	sort.Strings(sortedQueries)
+
+	content := strings.Join(sortedQueries, ";\n")
+	if len(sortedQueries) > 0 && content != "" {
+		content += ";"
+	}
+
+	// Use only the filename part for golden.Assert since it automatically looks in testdata/
+	filename := filepath.Base(qm.goldenFile)
+
+	// Check if golden file exists and provide helpful error message (only when not updating)
+	if !golden.FlagUpdate() {
+		goldenPath := filepath.Join("testdata", filename)
+		if _, err := os.Stat(goldenPath); os.IsNotExist(err) {
+			t.Fatalf("Golden file '%s' does not exist.\n\nTo create the golden file:\n1. Run the test with -update flag: go test -update\n   OR\n2. Manually create the file with expected SQL queries\n   OR\n3. Use SaveToFile() method to generate the golden file from recorded queries", goldenPath)
+		}
+
+		// Perform normalized comparison before golden assertion
+		if data, err := os.ReadFile(goldenPath); err == nil {
+			goldenContent := string(data)
+
+			// Normalize and sort actual queries for comparison
+			actualNormalized := make([]string, len(sortedQueries))
+			for i, query := range sortedQueries {
+				actualNormalized[i] = qm.normalizeForComparison(query)
+			}
+			sort.Strings(actualNormalized)
+
+			// Normalize and sort golden queries for comparison
+			queries := strings.Split(strings.TrimSuffix(goldenContent, ";"), ";\n")
+			goldenNormalized := make([]string, 0, len(queries))
+			for _, query := range queries {
+				if strings.TrimSpace(query) != "" {
+					goldenNormalized = append(goldenNormalized, qm.normalizeForComparison(query))
+				}
+			}
+			sort.Strings(goldenNormalized)
+
+			// Check if normalized queries match
+			if len(actualNormalized) == len(goldenNormalized) {
+				allMatch := true
+				for i := 0; i < len(actualNormalized); i++ {
+					if actualNormalized[i] != goldenNormalized[i] {
+						allMatch = false
+						break
+					}
+				}
+
+				if allMatch {
+					// Show normalized comparison for success case
+					fmt.Printf("\n=== NORMALIZED COMPARISON (SORTED) ===\n")
+					for i := 0; i < len(actualNormalized); i++ {
+						fmt.Printf("  [%d] ✓ MATCH: %s\n", i+1, actualNormalized[i])
+					}
+					fmt.Printf("\n  ✓ All normalized queries match (order-independent)! The difference is only in formatting/order.\n")
+					// Return early - test passes
+					return
+				}
+			}
+		}
+	}
+
+	// Try assertion, if it fails, show normalized diff
+	defer func() {
+		if t.Failed() && !golden.FlagUpdate() {
+			// Read golden file and show normalized comparison
+			if data, err := os.ReadFile(filepath.Join("testdata", filename)); err == nil {
+				goldenContent := string(data)
+
+				// Normalize and sort actual queries for comparison
+				actualNormalized := make([]string, len(sortedQueries))
+				for i, query := range sortedQueries {
+					actualNormalized[i] = qm.normalizeForComparison(query)
+				}
+				sort.Strings(actualNormalized)
+
+				// Normalize and sort golden queries for comparison
+				queries := strings.Split(strings.TrimSuffix(goldenContent, ";"), ";\n")
+				goldenNormalized := make([]string, 0, len(queries))
+				for _, query := range queries {
+					if strings.TrimSpace(query) != "" {
+						goldenNormalized = append(goldenNormalized, qm.normalizeForComparison(query))
+					}
+				}
+				sort.Strings(goldenNormalized)
+
+				// Line-by-line comparison with clear formatting
+				fmt.Printf("\n=== NORMALIZED COMPARISON (SORTED) ===\n")
+				maxLen := len(goldenNormalized)
+				if len(actualNormalized) > maxLen {
+					maxLen = len(actualNormalized)
+				}
+
+				allMatch := true
+				for i := 0; i < maxLen; i++ {
+					var expected, actual string
+					if i < len(goldenNormalized) {
+						expected = goldenNormalized[i]
+					}
+					if i < len(actualNormalized) {
+						actual = actualNormalized[i]
+					}
+
+					if expected == actual {
+						fmt.Printf("  [%d] ✓ MATCH: %s\n", i+1, expected)
+					} else {
+						allMatch = false
+						fmt.Printf("  [%d] ✗ DIFF:\n", i+1)
+						if expected != "" {
+							fmt.Printf("       Expected: %s\n", expected)
+						} else {
+							fmt.Printf("       Expected: <missing>\n")
+						}
+						if actual != "" {
+							fmt.Printf("       Actual:   %s\n", actual)
+						} else {
+							fmt.Printf("       Actual:   <missing>\n")
+						}
+					}
+				}
+
+				if allMatch {
+					fmt.Printf("\n  ✓ All normalized queries match (order-independent)! The difference is only in formatting/order.\n")
+				} else {
+					fmt.Printf("\n  ✗ Normalized queries have actual differences.\n")
+				}
+			}
+		}
+	}()
+
 	golden.Assert(t, content, filename)
 }
 

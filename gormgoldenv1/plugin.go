@@ -184,3 +184,11 @@ func AssertGoldenDB(t *testing.T, db *gorm.DB) {
 		qm.AssertGolden(t)
 	}
 }
+
+// AssertGoldenSortedDB asserts golden file for a specific DB instance, ignoring query order.
+// This is useful when queries are executed in parallel and their order is non-deterministic.
+func AssertGoldenSortedDB(t *testing.T, db *gorm.DB) {
+	if qm := getQueryManagerByDB(db); qm != nil {
+		qm.AssertGoldenSorted(t)
+	}
+}
