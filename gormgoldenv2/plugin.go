@@ -106,3 +106,11 @@ func (p *Plugin) AssertGolden(t *testing.T) {
 		p.queryManager.AssertGolden(t)
 	}
 }
+
+// AssertGoldenSorted asserts the recorded queries against a golden file, ignoring query order.
+// This is useful when queries are executed in parallel and their order is non-deterministic.
+func (p *Plugin) AssertGoldenSorted(t *testing.T) {
+	if p.queryManager != nil {
+		p.queryManager.AssertGoldenSorted(t)
+	}
+}
