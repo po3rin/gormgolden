@@ -97,19 +97,356 @@ func (qm *QueryManager) basicNormalize(query string) string {
 func (qm *QueryManager) normalizeForComparison(query string) string {
 	// Start with basic normalization
 	query = qm.basicNormalize(query)
-	
+
+	// Remove backticks for comparison (do this early to simplify parsing)
+	query = strings.ReplaceAll(query, "`", "")
+
 	// Remove MySQL charset prefixes like _UTF8MB4
 	utf8mb4Regex := regexp.MustCompile(`_UTF8MB4([0-9A-Za-z]+)`)
 	query = utf8mb4Regex.ReplaceAllString(query, "$1")
-	
-	// Remove ALL parentheses for comparison
+
+	// Normalize ORDER BY and LIMIT clauses for comparison:
+	// Remove ORDER BY and LIMIT clauses entirely from comparison to ignore format differences
+	if idx := strings.Index(query, " ORDER BY "); idx != -1 {
+		query = query[:idx]
+	}
+
+	// Normalize JOIN order BEFORE WHERE clause normalization
+	// GORM v1 and v2 may produce JOINs in different order, but semantically identical
+	query = qm.normalizeJoinOrder(query)
+
+	// Normalize main WHERE clause BEFORE removing parentheses
+	// This allows us to identify the main WHERE vs subquery WHERE correctly
+	query = qm.normalizeMainWhereClause(query)
+
+	// Remove ALL parentheses for comparison (after WHERE normalization)
 	query = strings.ReplaceAll(query, "(", "")
 	query = strings.ReplaceAll(query, ")", "")
-	
-	// Remove backticks for comparison
-	query = strings.ReplaceAll(query, "`", "")
-	
+
 	return query
+}
+
+// normalizeJoinOrder sorts JOIN clauses to make comparison order-independent
+// GORM v1 and v2 may produce JOINs in different orders, but they are semantically identical
+func (qm *QueryManager) normalizeJoinOrder(query string) string {
+	// Find FROM clause
+	fromIdx := strings.Index(query, " FROM ")
+	if fromIdx == -1 {
+		return query
+	}
+
+	// Find WHERE clause (or ORDER BY if no WHERE, or end of string)
+	searchStart := fromIdx + 6 // Skip " FROM "
+	whereIdx := strings.Index(query[searchStart:], " WHERE ")
+	if whereIdx == -1 {
+		// No WHERE, look for ORDER BY
+		whereIdx = strings.Index(query[searchStart:], " ORDER BY ")
+		if whereIdx == -1 {
+			// No WHERE or ORDER BY, use end of string
+			whereIdx = len(query) - searchStart
+		}
+	}
+	whereIdx += searchStart
+
+	// Extract the section from FROM to WHERE/ORDER BY
+	fromSection := query[fromIdx:whereIdx]
+	beforeFrom := query[:fromIdx]
+	afterFromSection := query[whereIdx:]
+
+	// Extract all JOIN clauses
+	joins := qm.extractJoinClauses(fromSection)
+
+	// Sort JOINs by type and table name
+	sort.Slice(joins, func(i, j int) bool {
+		// Extract JOIN type and table name for comparison
+		typeI, tableI := qm.extractJoinTypeAndTable(joins[i])
+		typeJ, tableJ := qm.extractJoinTypeAndTable(joins[j])
+
+		// Sort by type first, then by table name
+		if typeI != typeJ {
+			return typeI < typeJ
+		}
+		return tableI < tableJ
+	})
+
+	// Reconstruct the FROM section with sorted JOINs
+	var fromWithJoins strings.Builder
+	fromWithJoins.WriteString(" FROM ")
+
+	// Find the main table (before first JOIN)
+	firstJoinIdx := strings.Index(fromSection, " JOIN ")
+	if firstJoinIdx == -1 {
+		firstJoinIdx = strings.Index(fromSection, " LEFT ")
+		if firstJoinIdx == -1 {
+			// No JOINs, return as is
+			return query
+		}
+	}
+
+	mainTable := strings.TrimSpace(fromSection[6:firstJoinIdx]) // Skip " FROM "
+	fromWithJoins.WriteString(mainTable)
+
+	// Add sorted JOINs
+	for _, join := range joins {
+		fromWithJoins.WriteString(" ")
+		fromWithJoins.WriteString(join)
+	}
+
+	return beforeFrom + fromWithJoins.String() + afterFromSection
+}
+
+// extractJoinClauses extracts all JOIN clauses from a FROM section
+func (qm *QueryManager) extractJoinClauses(fromSection string) []string {
+	var joins []string
+
+	// Pattern: " JOIN ", " LEFT JOIN ", " LEFT OUTER JOIN ", " INNER JOIN ", " RIGHT JOIN "
+	joinKeywords := []string{" LEFT OUTER JOIN ", " RIGHT OUTER JOIN ", " LEFT JOIN ", " RIGHT JOIN ", " INNER JOIN ", " JOIN "}
+
+	// Find all JOIN positions
+	type joinPos struct {
+		pos     int
+		keyword string
+	}
+	var positions []joinPos
+
+	for _, keyword := range joinKeywords {
+		idx := 0
+		for {
+			pos := strings.Index(fromSection[idx:], keyword)
+			if pos == -1 {
+				break
+			}
+			positions = append(positions, joinPos{pos: idx + pos, keyword: keyword})
+			idx += pos + len(keyword)
+		}
+	}
+
+	// Sort positions
+	sort.Slice(positions, func(i, j int) bool {
+		return positions[i].pos < positions[j].pos
+	})
+
+	// Extract each JOIN clause
+	for i := 0; i < len(positions); i++ {
+		start := positions[i].pos
+		end := len(fromSection)
+		if i+1 < len(positions) {
+			end = positions[i+1].pos
+		}
+
+		joinClause := strings.TrimSpace(fromSection[start:end])
+		joins = append(joins, joinClause)
+	}
+
+	return joins
+}
+
+// extractJoinTypeAndTable extracts the JOIN type and table name from a JOIN clause
+func (qm *QueryManager) extractJoinTypeAndTable(joinClause string) (string, string) {
+	// Normalize JOIN type
+	joinType := ""
+	tableName := ""
+
+	if strings.HasPrefix(joinClause, "LEFT OUTER JOIN ") {
+		joinType = "LEFT"
+		tableName = strings.TrimSpace(strings.Split(joinClause[16:], " ON ")[0])
+	} else if strings.HasPrefix(joinClause, "LEFT JOIN ") {
+		joinType = "LEFT"
+		tableName = strings.TrimSpace(strings.Split(joinClause[10:], " ON ")[0])
+	} else if strings.HasPrefix(joinClause, "RIGHT OUTER JOIN ") {
+		joinType = "RIGHT"
+		tableName = strings.TrimSpace(strings.Split(joinClause[17:], " ON ")[0])
+	} else if strings.HasPrefix(joinClause, "RIGHT JOIN ") {
+		joinType = "RIGHT"
+		tableName = strings.TrimSpace(strings.Split(joinClause[11:], " ON ")[0])
+	} else if strings.HasPrefix(joinClause, "INNER JOIN ") {
+		joinType = "INNER"
+		tableName = strings.TrimSpace(strings.Split(joinClause[11:], " ON ")[0])
+	} else if strings.HasPrefix(joinClause, "JOIN ") {
+		joinType = "INNER"
+		tableName = strings.TrimSpace(strings.Split(joinClause[5:], " ON ")[0])
+	}
+
+	// Extract just the table name (before any AS clause)
+	if idx := strings.Index(tableName, " AS "); idx != -1 {
+		tableName = tableName[:idx]
+	}
+
+	return joinType, tableName
+}
+
+// normalizeMainWhereClause normalizes the main WHERE clause (not subquery WHERE)
+// by sorting conditions alphabetically. This must be called BEFORE removing parentheses.
+func (qm *QueryManager) normalizeMainWhereClause(query string) string {
+	// Strategy: Find the main WHERE clause by looking for " WHERE " that comes
+	// after the last JOIN clause or after the FROM clause if no JOINs exist.
+	// This ensures we normalize the main query's WHERE, not a subquery's WHERE.
+
+	// Find the last occurrence of " ON " (end of JOIN clauses)
+	lastOnIdx := strings.LastIndex(query, " ON ")
+	searchStart := 0
+	if lastOnIdx != -1 {
+		searchStart = lastOnIdx
+	} else {
+		// No JOINs, look after FROM
+		fromIdx := strings.Index(query, " FROM ")
+		if fromIdx != -1 {
+			searchStart = fromIdx
+		}
+	}
+
+	// Find the first " WHERE " after the search start position
+	whereIdx := strings.Index(query[searchStart:], " WHERE ")
+	if whereIdx == -1 {
+		return query
+	}
+	whereIdx += searchStart
+
+	// Find the end of the main WHERE clause
+	// It ends at ORDER BY, LIMIT, or end of string
+	whereStart := whereIdx + 7 // +7 to skip " WHERE "
+	whereEnd := len(query)
+
+	// Check for ORDER BY or LIMIT
+	if idx := strings.Index(query[whereStart:], " ORDER BY "); idx != -1 {
+		whereEnd = whereStart + idx
+	} else if idx := strings.Index(query[whereStart:], " LIMIT "); idx != -1 {
+		whereEnd = whereStart + idx
+	}
+
+	// Extract the WHERE clause
+	beforeWhere := query[:whereIdx]
+	whereClause := query[whereStart:whereEnd]
+	afterWhere := query[whereEnd:]
+
+	// Split WHERE conditions by " AND " at the top level (not inside parentheses)
+	conditions := qm.splitWhereConditions(whereClause)
+
+	// Flatten nested parentheses in each condition and recursively split
+	var flatConditions []string
+	for _, cond := range conditions {
+		flatConditions = append(flatConditions, qm.flattenAndExtractConditions(cond)...)
+	}
+
+	// Sort conditions alphabetically
+	sort.Strings(flatConditions)
+
+	// Rejoin
+	return beforeWhere + " WHERE " + strings.Join(flatConditions, " AND ") + afterWhere
+}
+
+// flattenAndExtractConditions recursively flattens a condition and extracts all sub-conditions
+func (qm *QueryManager) flattenAndExtractConditions(cond string) []string {
+	// Flatten outer parentheses
+	cond = qm.flattenNestedParentheses(cond)
+
+	// If the condition contains " AND " at the top level, split it recursively
+	parts := qm.splitWhereConditions(cond)
+	if len(parts) > 1 {
+		// Recursively flatten each part
+		var result []string
+		for _, part := range parts {
+			result = append(result, qm.flattenAndExtractConditions(part)...)
+		}
+		return result
+	}
+
+	// Base case: single condition
+	return []string{cond}
+}
+
+// flattenNestedParentheses removes outer parentheses layers while preserving inner ones
+// Converts ((...)) to ... while keeping subqueries intact
+func (qm *QueryManager) flattenNestedParentheses(s string) string {
+	s = strings.TrimSpace(s)
+
+	// Keep removing outer parentheses as long as the entire string is wrapped
+	for len(s) >= 2 && s[0] == '(' && s[len(s)-1] == ')' {
+		// Check if this is truly a wrapper (the closing paren matches the opening one)
+		parenDepth := 0
+		isWrapper := true
+		for i := 0; i < len(s)-1; i++ {
+			if s[i] == '(' {
+				parenDepth++
+			} else if s[i] == ')' {
+				parenDepth--
+				if parenDepth == 0 {
+					// Found a closing paren before the end - not a wrapper
+					isWrapper = false
+					break
+				}
+			}
+		}
+
+		if isWrapper {
+			s = strings.TrimSpace(s[1 : len(s)-1])
+		} else {
+			break
+		}
+	}
+
+	return s
+}
+
+// splitWhereConditions splits WHERE clause by " AND " while respecting parentheses
+func (qm *QueryManager) splitWhereConditions(whereClause string) []string {
+	var conditions []string
+	var current strings.Builder
+	parenDepth := 0
+
+	i := 0
+	for i < len(whereClause) {
+		if whereClause[i] == '(' {
+			parenDepth++
+			current.WriteByte(whereClause[i])
+			i++
+		} else if whereClause[i] == ')' {
+			parenDepth--
+			current.WriteByte(whereClause[i])
+			i++
+		} else if parenDepth == 0 && i+5 <= len(whereClause) && whereClause[i:i+5] == " AND " {
+			// Found a top-level AND
+			if current.Len() > 0 {
+				conditions = append(conditions, strings.TrimSpace(current.String()))
+				current.Reset()
+			}
+			i += 5 // Skip " AND "
+		} else {
+			current.WriteByte(whereClause[i])
+			i++
+		}
+	}
+
+	// Add the last condition
+	if current.Len() > 0 {
+		conditions = append(conditions, strings.TrimSpace(current.String()))
+	}
+
+	return conditions
+}
+
+// normalizeWhereClause sorts WHERE clause conditions for order-independent comparison
+// This is kept for backward compatibility but may not work correctly with subqueries
+func (qm *QueryManager) normalizeWhereClause(query string) string {
+	// Find the LAST WHERE clause (main query's WHERE, not subquery's WHERE)
+	// This handles queries with subqueries that have their own WHERE clauses
+	whereIdx := strings.LastIndex(query, " WHERE ")
+	if whereIdx == -1 {
+		return query
+	}
+
+	// Split into before WHERE and WHERE clause
+	beforeWhere := query[:whereIdx]
+	whereClause := query[whereIdx+7:] // +7 to skip " WHERE "
+
+	// Split WHERE conditions by " AND "
+	conditions := strings.Split(whereClause, " AND ")
+
+	// Sort conditions alphabetically
+	sort.Strings(conditions)
+
+	// Rejoin
+	return beforeWhere + " WHERE " + strings.Join(conditions, " AND ")
 }
 
 // AddQuery adds a SQL query to the recorded list
