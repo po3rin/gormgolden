@@ -105,11 +105,10 @@ func (qm *QueryManager) normalizeForComparison(query string) string {
 	utf8mb4Regex := regexp.MustCompile(`_UTF8MB4([0-9A-Za-z]+)`)
 	query = utf8mb4Regex.ReplaceAllString(query, "$1")
 
-	// Normalize ORDER BY and LIMIT clauses for comparison:
-	// Remove ORDER BY and LIMIT clauses entirely from comparison to ignore format differences
-	if idx := strings.Index(query, " ORDER BY "); idx != -1 {
-		query = query[:idx]
-	}
+	// Normalize LIMIT clause format:
+	// Convert "LIMIT offset,count" to "LIMIT count OFFSET offset" format
+	// Remove OFFSET 0 as it's redundant (e.g., "LIMIT 100 OFFSET 0" -> "LIMIT 100")
+	query = qm.normalizeLimitClause(query)
 
 	// Normalize JOIN order BEFORE WHERE clause normalization
 	// GORM v1 and v2 may produce JOINs in different order, but semantically identical
@@ -124,6 +123,60 @@ func (qm *QueryManager) normalizeForComparison(query string) string {
 	query = strings.ReplaceAll(query, ")", "")
 
 	return query
+}
+
+// normalizeLimitClause normalizes LIMIT clause format for comparison
+// Handles two formats:
+// 1. MySQL comma format: "LIMIT offset,count" -> "LIMIT count OFFSET offset"
+// 2. SQL standard: "LIMIT count OFFSET offset"
+// Also removes redundant "OFFSET 0" (e.g., "LIMIT 100 OFFSET 0" -> "LIMIT 100")
+func (qm *QueryManager) normalizeLimitClause(query string) string {
+	// Find LIMIT clause
+	limitIdx := strings.Index(query, " LIMIT ")
+	if limitIdx == -1 {
+		return query
+	}
+
+	// Extract everything after LIMIT
+	afterLimit := query[limitIdx+7:] // Skip " LIMIT "
+
+	// Find the end of LIMIT clause (semicolon or end of string)
+	limitEnd := len(afterLimit)
+	if idx := strings.Index(afterLimit, ";"); idx != -1 {
+		limitEnd = idx
+	}
+
+	limitClause := strings.TrimSpace(afterLimit[:limitEnd])
+	remaining := afterLimit[limitEnd:]
+
+	// Check if it's comma format: "offset,count"
+	if strings.Contains(limitClause, ",") {
+		parts := strings.Split(limitClause, ",")
+		if len(parts) == 2 {
+			offset := strings.TrimSpace(parts[0])
+			count := strings.TrimSpace(parts[1])
+
+			// Convert to standard format
+			if offset == "0" {
+				// Remove redundant OFFSET 0
+				limitClause = count
+			} else {
+				limitClause = count + " OFFSET " + offset
+			}
+		}
+	} else if strings.Contains(limitClause, " OFFSET ") {
+		// Already in standard format, check if OFFSET 0 can be removed
+		parts := strings.Split(limitClause, " OFFSET ")
+		if len(parts) == 2 {
+			offset := strings.TrimSpace(parts[1])
+			if offset == "0" {
+				// Remove redundant OFFSET 0
+				limitClause = strings.TrimSpace(parts[0])
+			}
+		}
+	}
+
+	return query[:limitIdx] + " LIMIT " + limitClause + remaining
 }
 
 // normalizeJoinOrder sorts JOIN clauses to make comparison order-independent
