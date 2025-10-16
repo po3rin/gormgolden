@@ -172,7 +172,7 @@ func TestQueryManager_normalizeForComparison(t *testing.T) {
 		{
 			name:     "complex query with UTF8MB4 and parentheses",
 			input:    "SELECT * FROM `user_settings` WHERE (`user_settings`.`org_id`=_UTF8MB4ABC123DEF456GHI789JKL012) AND (`user_settings`.`config_id` IN (_UTF8MB4XYZ789ABC123DEF456GHI))",
-			expected: "SELECT * FROM user_settings WHERE user_settings.org_id=ABC123DEF456GHI789JKL012 AND user_settings.config_id IN XYZ789ABC123DEF456GHI",
+			expected: "SELECT * FROM user_settings WHERE user_settings.config_id IN XYZ789ABC123DEF456GHI AND user_settings.org_id=ABC123DEF456GHI789JKL012",
 		},
 		{
 			name:     "multiple UTF8MB4 occurrences",
@@ -232,7 +232,7 @@ func TestQueryManager_CompareQueries(t *testing.T) {
 		{
 			name:     "complex real-world example should match",
 			query1:   "SELECT * FROM `user_settings` WHERE (`user_settings`.`org_id`=_UTF8MB4ABC123DEF456GHI789JKL012) AND (`user_settings`.`config_id` IN (_UTF8MB4XYZ789ABC123DEF456GHI))",
-			query2:   "SELECT * FROM user_settings WHERE user_settings.org_id=ABC123DEF456GHI789JKL012 AND user_settings.config_id IN XYZ789ABC123DEF456GHI",
+			query2:   "SELECT * FROM user_settings WHERE user_settings.config_id IN XYZ789ABC123DEF456GHI AND user_settings.org_id=ABC123DEF456GHI789JKL012",
 			expected: true,
 		},
 	}

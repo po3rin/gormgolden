@@ -16,6 +16,17 @@ import (
 	"gotest.tools/v3/golden"
 )
 
+// ANSI color codes for terminal output
+const (
+	colorRed    = "\033[31m"
+	colorGreen  = "\033[32m"
+	colorYellow = "\033[33m"
+	colorBlue   = "\033[34m"
+	colorCyan   = "\033[36m"
+	colorBold   = "\033[1m"
+	colorReset  = "\033[0m"
+)
+
 // QueryManager manages SQL query recording with thread-safe operations
 type QueryManager struct {
 	mu         sync.Mutex
@@ -765,11 +776,12 @@ func (qm *QueryManager) AssertGolden(t *testing.T) {
 
 				if allMatch {
 					// Show normalized comparison for success case
-					fmt.Printf("\n=== NORMALIZED COMPARISON ===\n")
+					fmt.Printf("\n%s%s=== NORMALIZED COMPARISON ===%s\n", colorBold, colorCyan, colorReset)
+					fmt.Printf("%sTotal queries: %d%s\n", colorBlue, len(actualNormalized), colorReset)
 					for i := 0; i < len(actualNormalized); i++ {
-						fmt.Printf("  [%d] ✓ MATCH: %s\n", i+1, actualNormalized[i])
+						fmt.Printf("  %s[%d]%s %s✓ MATCH:%s %s\n", colorBlue, i+1, colorReset, colorGreen, colorReset, actualNormalized[i])
 					}
-					fmt.Printf("\n  ✓ All normalized queries match! The difference is only in formatting.\n")
+					fmt.Printf("\n  %s✓ All normalized queries match! The difference is only in formatting.%s\n", colorGreen, colorReset)
 					// Return early - test passes
 					return
 				}
@@ -799,13 +811,15 @@ func (qm *QueryManager) AssertGolden(t *testing.T) {
 					}
 				}
 				// Line-by-line comparison with clear formatting
-				fmt.Printf("\n=== NORMALIZED COMPARISON ===\n")
+				fmt.Printf("\n%s%s=== NORMALIZED COMPARISON ===%s\n", colorBold, colorCyan, colorReset)
+				fmt.Printf("%sExpected: %d queries | Actual: %d queries%s\n", colorBlue, len(goldenNormalized), len(actualNormalized), colorReset)
 				maxLen := len(goldenNormalized)
 				if len(actualNormalized) > maxLen {
 					maxLen = len(actualNormalized)
 				}
 
 				allMatch := true
+				matchCount := 0
 				for i := 0; i < maxLen; i++ {
 					var expected, actual string
 					if i < len(goldenNormalized) {
@@ -816,27 +830,29 @@ func (qm *QueryManager) AssertGolden(t *testing.T) {
 					}
 
 					if expected == actual {
-						fmt.Printf("  [%d] ✓ MATCH: %s\n", i+1, expected)
+						matchCount++
+						fmt.Printf("  %s[%d]%s %s✓ MATCH:%s %s\n", colorBlue, i+1, colorReset, colorGreen, colorReset, expected)
 					} else {
 						allMatch = false
-						fmt.Printf("  [%d] ✗ DIFF:\n", i+1)
+						fmt.Printf("  %s[%d]%s %s✗ DIFF:%s\n", colorBlue, i+1, colorReset, colorRed, colorReset)
 						if expected != "" {
-							fmt.Printf("       Expected: %s\n", expected)
+							fmt.Printf("       %s%sExpected:%s %s\n", colorBold, colorYellow, colorReset, expected)
 						} else {
-							fmt.Printf("       Expected: <missing>\n")
+							fmt.Printf("       %s%sExpected:%s <missing>\n", colorBold, colorYellow, colorReset)
 						}
 						if actual != "" {
-							fmt.Printf("       Actual:   %s\n", actual)
+							fmt.Printf("       %s%sActual:%s   %s\n", colorBold, colorYellow, colorReset, actual)
 						} else {
-							fmt.Printf("       Actual:   <missing>\n")
+							fmt.Printf("       %s%sActual:%s   <missing>\n", colorBold, colorYellow, colorReset)
 						}
 					}
 				}
 
 				if allMatch {
-					fmt.Printf("\n  ✓ All normalized queries match! The difference is only in formatting.\n")
+					fmt.Printf("\n  %s✓ All normalized queries match! The difference is only in formatting.%s\n", colorGreen, colorReset)
 				} else {
-					fmt.Printf("\n  ✗ Normalized queries have actual differences.\n")
+					fmt.Printf("\n  %s✗ Normalized queries have actual differences.%s\n", colorRed, colorReset)
+					fmt.Printf("  %sMatched: %d/%d queries%s\n", colorYellow, matchCount, maxLen, colorReset)
 				}
 			}
 		}
@@ -904,11 +920,12 @@ func (qm *QueryManager) AssertGoldenSorted(t *testing.T) {
 
 				if allMatch {
 					// Show normalized comparison for success case
-					fmt.Printf("\n=== NORMALIZED COMPARISON (SORTED) ===\n")
+					fmt.Printf("\n%s%s=== NORMALIZED COMPARISON (SORTED) ===%s\n", colorBold, colorCyan, colorReset)
+					fmt.Printf("%sTotal queries: %d%s\n", colorBlue, len(actualNormalized), colorReset)
 					for i := 0; i < len(actualNormalized); i++ {
-						fmt.Printf("  [%d] ✓ MATCH: %s\n", i+1, actualNormalized[i])
+						fmt.Printf("  %s[%d]%s %s✓ MATCH:%s %s\n", colorBlue, i+1, colorReset, colorGreen, colorReset, actualNormalized[i])
 					}
-					fmt.Printf("\n  ✓ All normalized queries match (order-independent)! The difference is only in formatting/order.\n")
+					fmt.Printf("\n  %s✓ All normalized queries match (order-independent)! The difference is only in formatting/order.%s\n", colorGreen, colorReset)
 					// Return early - test passes
 					return
 				}
@@ -941,13 +958,15 @@ func (qm *QueryManager) AssertGoldenSorted(t *testing.T) {
 				sort.Strings(goldenNormalized)
 
 				// Line-by-line comparison with clear formatting
-				fmt.Printf("\n=== NORMALIZED COMPARISON (SORTED) ===\n")
+				fmt.Printf("\n%s%s=== NORMALIZED COMPARISON (SORTED) ===%s\n", colorBold, colorCyan, colorReset)
+				fmt.Printf("%sExpected: %d queries | Actual: %d queries%s\n", colorBlue, len(goldenNormalized), len(actualNormalized), colorReset)
 				maxLen := len(goldenNormalized)
 				if len(actualNormalized) > maxLen {
 					maxLen = len(actualNormalized)
 				}
 
 				allMatch := true
+				matchCount := 0
 				for i := 0; i < maxLen; i++ {
 					var expected, actual string
 					if i < len(goldenNormalized) {
@@ -958,27 +977,29 @@ func (qm *QueryManager) AssertGoldenSorted(t *testing.T) {
 					}
 
 					if expected == actual {
-						fmt.Printf("  [%d] ✓ MATCH: %s\n", i+1, expected)
+						matchCount++
+						fmt.Printf("  %s[%d]%s %s✓ MATCH:%s %s\n", colorBlue, i+1, colorReset, colorGreen, colorReset, expected)
 					} else {
 						allMatch = false
-						fmt.Printf("  [%d] ✗ DIFF:\n", i+1)
+						fmt.Printf("  %s[%d]%s %s✗ DIFF:%s\n", colorBlue, i+1, colorReset, colorRed, colorReset)
 						if expected != "" {
-							fmt.Printf("       Expected: %s\n", expected)
+							fmt.Printf("       %s%sExpected:%s %s\n", colorBold, colorYellow, colorReset, expected)
 						} else {
-							fmt.Printf("       Expected: <missing>\n")
+							fmt.Printf("       %s%sExpected:%s <missing>\n", colorBold, colorYellow, colorReset)
 						}
 						if actual != "" {
-							fmt.Printf("       Actual:   %s\n", actual)
+							fmt.Printf("       %s%sActual:%s   %s\n", colorBold, colorYellow, colorReset, actual)
 						} else {
-							fmt.Printf("       Actual:   <missing>\n")
+							fmt.Printf("       %s%sActual:%s   <missing>\n", colorBold, colorYellow, colorReset)
 						}
 					}
 				}
 
 				if allMatch {
-					fmt.Printf("\n  ✓ All normalized queries match (order-independent)! The difference is only in formatting/order.\n")
+					fmt.Printf("\n  %s✓ All normalized queries match (order-independent)! The difference is only in formatting/order.%s\n", colorGreen, colorReset)
 				} else {
-					fmt.Printf("\n  ✗ Normalized queries have actual differences.\n")
+					fmt.Printf("\n  %s✗ Normalized queries have actual differences.%s\n", colorRed, colorReset)
+					fmt.Printf("  %sMatched: %d/%d queries%s\n", colorYellow, matchCount, maxLen, colorReset)
 				}
 			}
 		}
