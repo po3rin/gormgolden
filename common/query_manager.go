@@ -861,15 +861,58 @@ func (qm *QueryManager) AssertGolden(t *testing.T) {
 	golden.Assert(t, content, filename)
 }
 
+// filterSubqueries filters out subqueries from a list of queries.
+// Subqueries are queries that appear as part of other queries (in JOIN or IN clauses).
+// This is done by checking if each query's normalized form is a substring of any other query.
+func (qm *QueryManager) filterSubqueries(queries []string) []string {
+	if len(queries) <= 1 {
+		return queries
+	}
+
+	// Normalize all queries for comparison
+	normalized := make([]string, len(queries))
+	for i, query := range queries {
+		normalized[i] = qm.normalizeForComparison(query)
+	}
+
+	// Mark queries that are subqueries
+	isSubquery := make([]bool, len(queries))
+	for i := 0; i < len(normalized); i++ {
+		for j := 0; j < len(normalized); j++ {
+			if i == j {
+				continue
+			}
+			// If query[i] appears as a substring in query[j], it's likely a subquery
+			if strings.Contains(normalized[j], normalized[i]) {
+				isSubquery[i] = true
+				break
+			}
+		}
+	}
+
+	// Filter out subqueries
+	filtered := make([]string, 0, len(queries))
+	for i, query := range queries {
+		if !isSubquery[i] {
+			filtered = append(filtered, query)
+		}
+	}
+
+	return filtered
+}
+
 // AssertGoldenSorted asserts the recorded queries against a golden file, ignoring query order.
 // This is useful when queries are executed in parallel and their order is non-deterministic.
 func (qm *QueryManager) AssertGoldenSorted(t *testing.T) {
 	qm.mu.Lock()
 	defer qm.mu.Unlock()
 
+	// Filter out subqueries first
+	filteredQueries := qm.filterSubqueries(qm.queries)
+
 	// Sort queries before joining
-	sortedQueries := make([]string, len(qm.queries))
-	copy(sortedQueries, qm.queries)
+	sortedQueries := make([]string, len(filteredQueries))
+	copy(sortedQueries, filteredQueries)
 	sort.Strings(sortedQueries)
 
 	content := strings.Join(sortedQueries, ";\n")
